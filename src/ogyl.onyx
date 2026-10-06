@@ -1,0 +1,10 @@
+package ogyl
+
+NativeContext :: struct {}
+WebContext :: struct {}
+
+#if #defined(js) {
+    Context :: WebContext
+} else {
+    Context :: NativeContext
+}

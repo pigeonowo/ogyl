@@ -1,0 +1,18 @@
+package {
+    name "ogyl" 
+    author "Jonas Stiller <jonas.stiller@t-online.de>" 
+    url "" 
+    description "Onyx Graphics (y?) Library" 
+    version "0.0.1" 
+}
+
+config {
+    dependency_source_path "./lib" 
+    dependency_binary_path "./bin" 
+}
+
+dependencies {
+    webgl2 "0.0.7" git="http://github.com/onyx-lang/pkg-webgl2" 
+    opengles "0.0.12" git="http://github.com/onyx-lang/pkg-opengles" 
+}
+
