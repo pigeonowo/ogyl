@@ -10,6 +10,9 @@ WebContext :: struct {}
 #overload
 delete :: (self: &WebContext) {}
 
+g_ctx: &WebContext
+g_callback: (&WebContext) -> void
+
 create_web_context :: (canvas_id: str, width: ?i32 = .{}, height: ?i32 = .{}) -> Context {
     return .{}
 }
@@ -20,6 +23,21 @@ WebContext.clear_background_color :: #match {
     },
     (ctx: &#Self, color: [4]i32) -> void {
 
+    }
+}
+
+WebContext.start_application_loop :: (ctx: &#Self, callback: (&#Self) -> void) {
+    g_ctx = ctx
+    g_callback = callback
+    js.Global->set("ONYX", js.Onyx)
+    js.Global->call("requestAnimationFrame", loop)
+    loop :: (_: js.Value, args: [] js.Value) -> js.Value {
+        defer js.release_pooled_objects()
+
+        g_callback(g_ctx)
+
+        js.Global->call("requestAnimationFrame", loop)
+        return js.Undefined
     }
 }
 
