@@ -63,9 +63,9 @@ NativeContext.clear_background_color :: #match {
     }
 }
 
-NativeContext.start_application_loop :: (ctx: &#Self, callback: (&#Self, &$T) -> void, usr_ctx: &$T) {
+NativeContext.start_application_loop :: (ctx: &#Self, callback: (&#Self) -> void) {
     while true {
-        callback(ctx, usr_ctx)
+        callback(ctx)
     }
 }
 
