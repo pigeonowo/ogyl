@@ -1,95 +1,221 @@
 package ogyl
+
+#load "../lib/packages"
+
 use core{*}
+#if #defined(js){
+    use webgl2{wgl :: package}
+}
 
 // ---- Context ----
 #if #defined(js) {
-// --- WEB ---
+    // --- WEB ---
 
-Context :: WebContext
-WebContext :: struct {}
-#overload
-delete :: (self: &WebContext) {}
-
-g_ctx: &WebContext
-g_callback: (&WebContext) -> void
-
-create_web_context :: (canvas_id: str, width: ?i32 = .{}, height: ?i32 = .{}) -> Context {
-    return .{}
-}
-
-WebContext.clear_background_color :: #match {
-    (ctx: &#Self, color: Color) -> void {
-
-    },
-    (ctx: &#Self, color: [4]i32) -> void {
-
+    Context :: WebContext
+    WebContext :: struct {
+        gl_ctx: js.Value
     }
-}
+    #overload
+    delete :: (self: &WebContext) {}
 
-WebContext.start_application_loop :: (ctx: &#Self, callback: (&#Self) -> void) {
-    g_ctx = ctx
-    g_callback = callback
-    js.Global->set("ONYX", js.Onyx)
-    js.Global->call("requestAnimationFrame", loop)
-    loop :: (_: js.Value, args: [] js.Value) -> js.Value {
-        defer js.release_pooled_objects()
+    g_ctx: &WebContext
+    g_callback: (&WebContext) -> void
 
-        g_callback(g_ctx)
+    create_web_context :: (canvas_id: str, width: ?i32 = .{}, height: ?i32 = .{}) -> Context {
+        log(.Debug, "Setting up canvas...")
+        js.setup_default_pool()
+        use doc := js.Global->get("document")
+        use canvas := doc->call("getElementById", canvas_id)
+        canvas->set("width", js.Global->get("innerWidth"))
+        canvas->set("height", js.Global->get("innerHeight"))
+        gl_ctx := canvas->call("getContext", "webgl2")
+        wgl.glInit(gl_ctx)
+        return .{gl_ctx}
+    }
 
+    WebContext.clear_background_color :: #match {
+        (ctx: &#Self, color: Color) -> void {
+
+        },
+        (ctx: &#Self, color: [4]i32) -> void {
+
+        }
+        (ctx: &#Self, color: ColorValue) -> void {
+            wgl.glClearColor(color.r, color.g, color.b, color.a)
+            wgl.glClear(wgl.GL_COLOR_BUFFER_BIT)
+        }
+    }
+
+    WebContext.start_application_loop :: (ctx: &#Self, callback: (&#Self) -> void) {
+        g_ctx = ctx
+        g_callback = callback
+        js.Global->set("ONYX", js.Onyx)
         js.Global->call("requestAnimationFrame", loop)
-        return js.Undefined
-    }
-}
+        loop :: (_: js.Value, args: [] js.Value) -> js.Value {
+            defer js.release_pooled_objects()
 
-// --- WEB ---
+            g_callback(g_ctx)
+
+            js.Global->call("requestAnimationFrame", loop)
+            return js.Undefined
+        }
+    }
+
+    // --- WEB ---
 } else {
-// --- NATIVE ---
+    // --- NATIVE ---
 
-Context :: NativeContext
-NativeContext :: struct {}
-#overload
-delete :: (ctx: &NativeContext) {}
+    Context :: NativeContext
+    NativeContext :: struct {}
+    #overload
+    delete :: (ctx: &NativeContext) {}
 
-create_native_context :: (window_name: str, width: i32 = 800, height: i32 = 600) -> Context {
-    return .{}
-}
-
-NativeContext.clear_background_color :: #match {
-    (ctx: &#Self, color: Color) -> void {
-
-    },
-    (ctx: &#Self, color: [4]i32) -> void {
-
+    create_native_context :: (window_name: str, width: i32 = 800, height: i32 = 600) -> Context {
+        return .{}
     }
-}
 
-NativeContext.start_application_loop :: (ctx: &#Self, callback: (&#Self) -> void) {
-    while true {
-        callback(ctx)
+    NativeContext.clear_background_color :: #match {
+        (ctx: &#Self, color: Color) -> void {
+
+        },
+        (ctx: &#Self, color: [4]i32) -> void {
+
+        },
+        (ctx: &#Self, color: ColorValue) -> void {
+
+        }
     }
-}
 
-// --- NATIVE ---
+    NativeContext.start_application_loop :: (ctx: &#Self, callback: (&#Self) -> void) {
+        while true {
+            callback(ctx)
+        }
+    }
+
+    // --- NATIVE ---
 }
 
 // ---- Context ----
 
 // ---- Shaders ----
-Shader :: struct {}
-Shader.make :: (vertex_source, fragment_source: str, ctx: &Context) -> #Self {
-    return .{}
+#if #defined(js) {
+    Shader :: struct {
+        shader: wgl.GLProgram
+    }
+} else {
+    Shader :: struct { _: i32}
+}
+Shader.make :: (vertex_source, fragment_source: str, ctx: &Context) -> ?#Self {
+    #if #defined(js) {
+        log(.Info, "shader compilation started...")
+        vertex_shader   := compile_shader(wgl.GL_VERTEX_SHADER, vertex_source)?
+        fragment_shader := compile_shader(wgl.GL_FRAGMENT_SHADER, fragment_source)?
+
+        program := wgl.glCreateProgram()
+        wgl.glAttachShader(program, vertex_shader)
+        wgl.glAttachShader(program, fragment_shader)
+        wgl.glLinkProgram(program)
+
+        if wgl.glGetProgramParameter(program, wgl.GL_LINK_STATUS) == 0 {
+            log(.Error, "Failed to link program.")
+            js.Global->get("console")->call("log", wgl.glGetProgramInfoLog(program))
+            return .None
+        }
+
+        log(.Info, "Completed shader compilation!")
+        return Shader.{program}
+    } else {
+        return .None
+    }
 }
 #overload
 delete :: (shader: &Shader) {}
 
+Shader.use_shader :: (shader: Shader) {
+    #if #defined(js) {
+        wgl.glUseProgram(shader.shader)
+    } else {
+
+    }
+}
+
+#if #defined(js) {
+    compile_shader :: (type: wgl.GLenum, source: str) -> ?wgl.GLShader {
+        shader := wgl.glCreateShader(type)
+
+        wgl.glShaderSource(shader, source)
+        wgl.glCompileShader(shader)
+
+        if wgl.glGetShaderParameter(shader, wgl.GL_COMPILE_STATUS) == 0 {
+            log(.Error, "Failed to compile shader.")
+            js.Global->get("console")->call("log", wgl.glGetShaderInfoLog(shader))
+            return .None
+        }
+
+        return shader
+    }
+}
 // ---- Shaders ----
 
 // ---- Shapes - Triangle ----
-Triangle :: struct {
-    verticies: [3][3]f32
+Vec2 :: [2]f32
+ColorValue :: [4]f32
+
+#if #defined(js) {
+    Triangle :: struct {
+        verticies: [3]Vec2
+        color_data: [3]ColorValue
+        vao: wgl.GLuint
+    }
+} else {
+    Triangle :: struct {
+        verticies: [3]Vec2
+        color_data: [3]ColorValue
+        vao: u32
+    }
 }
-Triangle.make :: (a, b, c: [3]f32) -> #Self {
-    return .{.[a, b, c]}
+Triangle.make :: (a, b, c: Vec2, acolor, bcolor, ccolor: ColorValue) -> #Self {
+    t := Triangle.{.[a, b, c], .[acolor, bcolor, ccolor], 0}
+
+    #if #defined(js) {
+        // Create VBO for verticies
+        vertex_buf := wgl.glCreateBuffer()
+        wgl.glBindBuffer(wgl.GL_ARRAY_BUFFER, vertex_buf)
+        wgl.glBufferData(wgl.GL_ARRAY_BUFFER, to_byte_array(t.verticies), wgl.GL_STATIC_DRAW)
+
+        color_buf := wgl.glCreateBuffer()
+        wgl.glBindBuffer(wgl.GL_ARRAY_BUFFER, color_buf)
+        wgl.glBufferData(wgl.GL_ARRAY_BUFFER, to_byte_array(t.color_data), wgl.GL_STATIC_DRAW)
+
+        // Create VAO
+        vao := wgl.glCreateVertexArray()
+        wgl.glBindVertexArray(vao)
+
+        // Map pointers
+        wgl.glEnableVertexAttribArray(0)
+        wgl.glBindBuffer(wgl.GL_ARRAY_BUFFER, vertex_buf)
+        wgl.glVertexAttribPointer(0, 2, wgl.GL_FLOAT, false, sizeof Vec2, 0)
+
+        wgl.glEnableVertexAttribArray(1)
+        wgl.glBindBuffer(wgl.GL_ARRAY_BUFFER, color_buf)
+        wgl.glVertexAttribPointer(1, 4, wgl.GL_FLOAT, false, sizeof ColorValue, 0)
+
+        wgl.glBindVertexArray(-1)
+
+        t.vao = vao
+    } else {
+
+    }
+
+
+    return t
+}
+
+Triangle.draw :: (triangle: #Self, ctx: &Context) {
+    #if #defined(js) {
+        wgl.glBindVertexArray(triangle.vao)
+        wgl.glDrawArrays(wgl.GL_TRIANGLES, 0, 3)
+    }
 }
 
 // ---- Shapes - Triangle ----
@@ -124,5 +250,9 @@ log :: (level: LogLevel, text: str) {
     } else {
         printf("[{}] {}\n", lvl_txt, text)
     }
+}
+
+to_byte_array :: macro (x: [] $T) -> [] u8 {
+    return .{ ~~ x.data, (sizeof T) * x.count };
 }
 // --- Helpers ---

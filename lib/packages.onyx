@@ -5,8 +5,12 @@
 //
 
 // PACKAGE LOADING
+use core{*}
+#if #defined(js) {
 #load "./github.com/onyx-lang/pkg-webgl2/module.onyx"
+} else {
 #load "./github.com/onyx-lang/pkg-opengles/module.onyx"
+}
 
 
 // NATIVE LIBRARY PATH
