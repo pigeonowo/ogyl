@@ -1,5 +1,17 @@
 package ogyl
 
+//
+//
+//
+//
+//
+// TODO: Make code "maintanable" after getting basic triangle to work
+//
+//
+//
+//
+//
+
 #load "../lib/packages"
 
 use core{*}
