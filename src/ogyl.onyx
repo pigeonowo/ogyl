@@ -16,7 +16,10 @@ package ogyl
 
 use core{*}
 #if #defined(js){
-    use webgl2{wgl :: package}
+    use webgl2{wgl :: package, *}
+} else {
+    use glfw3{glfw :: package, *}
+    use opengles{gl :: package, *}
 }
 
 // ---- Context ----
@@ -33,7 +36,7 @@ use core{*}
     g_ctx: &WebContext
     g_callback: (&WebContext) -> void
 
-    create_web_context :: (canvas_id: str, width: ?i32 = .{}, height: ?i32 = .{}) -> Context {
+    create_web_context :: (canvas_id: str, width: ?i32 = .{}, height: ?i32 = .{}) -> ?Context {
         log(.Debug, "Setting up canvas...")
         js.setup_default_pool()
         use doc := js.Global->get("document")
@@ -41,20 +44,20 @@ use core{*}
         canvas->set("width", js.Global->get("innerWidth"))
         canvas->set("height", js.Global->get("innerHeight"))
         gl_ctx := canvas->call("getContext", "webgl2")
-        wgl.glInit(gl_ctx)
+        glInit(gl_ctx)
         return .{gl_ctx}
     }
 
     WebContext.clear_background_color :: #match {
-        (ctx: &#Self, color: Color) -> void {
+        (ctx: &#Self, color: ColorValue) -> void {
 
         },
         (ctx: &#Self, color: [4]i32) -> void {
 
         }
-        (ctx: &#Self, color: ColorValue) -> void {
-            wgl.glClearColor(color.r, color.g, color.b, color.a)
-            wgl.glClear(wgl.GL_COLOR_BUFFER_BIT)
+        (ctx: &#Self, color: Color) -> void {
+            glClearColor(color.r, color.g, color.b, color.a)
+            glClear(GL_COLOR_BUFFER_BIT)
         }
     }
 
@@ -78,29 +81,53 @@ use core{*}
     // --- NATIVE ---
 
     Context :: NativeContext
-    NativeContext :: struct {}
+    NativeContext :: struct {
+        window: GLFWwindow_p
+    }
     #overload
-    delete :: (ctx: &NativeContext) {}
+    delete :: (ctx: &NativeContext) {
+        // glfwMakeContextCurrent()
+        glfwTerminate()
+    }
 
-    create_native_context :: (window_name: str, width: i32 = 800, height: i32 = 600) -> Context {
-        return .{}
+    create_native_context :: (window_name: [&]u8, width: i32 = 800, height: i32 = 600) -> ?Context {
+        // GLFW Setup
+        log(.Info, "glfw initializing...")
+        init_succeeded := glfwInit()
+        if init_succeeded {
+            log(.Info, "glfwInit succeeded")
+        } else {
+            log(.Info, "glfwInit NOT succeeded")
+        }
+        if !init_succeeded do return .None
+        window := glfwCreateWindow(width, height, window_name)
+        // if window == 0 do return .None
+        glfwMakeContextCurrent(window)
+
+        // OpenGL Setup
+        glInit(glfwGetLoadProcAddress())
+        glViewport(0, 0, width, height)
+
+        log(.Info, "Window created!")
+
+        return Context.{window}
     }
 
     NativeContext.clear_background_color :: #match {
-        (ctx: &#Self, color: Color) -> void {
-
-        },
         (ctx: &#Self, color: [4]i32) -> void {
 
         },
-        (ctx: &#Self, color: ColorValue) -> void {
-
+        (ctx: &#Self, color: Color) -> void {
+            glClearColor(color.r, color.g, color.b, color.a)
+            glClear(GL_COLOR_BUFFER_BIT)
         }
     }
 
     NativeContext.start_application_loop :: (ctx: &#Self, callback: (&#Self) -> void) {
         while true {
             callback(ctx)
+            glfwSwapBuffers(ctx.window);
+            glfwPollEvents();
         }
     }
 
@@ -111,129 +138,158 @@ use core{*}
 
 // ---- Shaders ----
 #if #defined(js) {
+    ShaderID :: GLShader
     Shader :: struct {
-        shader: wgl.GLProgram
+        shader: GLProgram
     }
 } else {
-    Shader :: struct { _: i32}
+    ShaderID :: GLuint
+    Shader :: struct {
+        shader: GLuint
+    }
 }
+
 Shader.make :: (vertex_source, fragment_source: str, ctx: &Context) -> ?#Self {
+    log(.Info, "shader compilation started...")
+    vertex_shader   := compile_shader(GL_VERTEX_SHADER, vertex_source)?
+    fragment_shader := compile_shader(GL_FRAGMENT_SHADER, fragment_source)?
+
+    program := glCreateProgram()
+    glAttachShader(program, vertex_shader)
+    glAttachShader(program, fragment_shader)
+    glLinkProgram(program)
+
     #if #defined(js) {
-        log(.Info, "shader compilation started...")
-        vertex_shader   := compile_shader(wgl.GL_VERTEX_SHADER, vertex_source)?
-        fragment_shader := compile_shader(wgl.GL_FRAGMENT_SHADER, fragment_source)?
-
-        program := wgl.glCreateProgram()
-        wgl.glAttachShader(program, vertex_shader)
-        wgl.glAttachShader(program, fragment_shader)
-        wgl.glLinkProgram(program)
-
-        if wgl.glGetProgramParameter(program, wgl.GL_LINK_STATUS) == 0 {
+        if glGetProgramParameter(program, GL_LINK_STATUS) == 0 {
             log(.Error, "Failed to link program.")
             js.Global->get("console")->call("log", wgl.glGetProgramInfoLog(program))
             return .None
         }
-
-        log(.Info, "Completed shader compilation!")
-        return Shader.{program}
     } else {
-        return .None
+        success: GLuint = 0
+        glGetProgramiv(program, GL_LINK_STATUS, &success)
+        if success == 0 {
+            log(.Error, "Failed to link program.")
+            return .None
+        }
     }
+
+    log(.Info, "Completed shader compilation!")
+    return Shader.{program}
 }
+
 #overload
 delete :: (shader: &Shader) {}
 
 Shader.use_shader :: (shader: Shader) {
-    #if #defined(js) {
-        wgl.glUseProgram(shader.shader)
-    } else {
-
-    }
+    glUseProgram(shader.shader)
 }
 
-#if #defined(js) {
-    compile_shader :: (type: wgl.GLenum, source: str) -> ?wgl.GLShader {
-        shader := wgl.glCreateShader(type)
+compile_shader :: (type: GLenum, source: str) -> ?ShaderID {
+    shader := glCreateShader(type)
 
-        wgl.glShaderSource(shader, source)
-        wgl.glCompileShader(shader)
+    #if #defined(js) {
+        glShaderSource(shader, source)
+    } else {
+        source_data := cptr.make(source.data)
+        glShaderSource(shader, 1, &source_data, &source.count)
+    }
+    glCompileShader(shader)
 
-        if wgl.glGetShaderParameter(shader, wgl.GL_COMPILE_STATUS) == 0 {
+    #if #defined(js) {
+        if glGetShaderParameter(shader, GL_COMPILE_STATUS) == 0 {
             log(.Error, "Failed to compile shader.")
-            js.Global->get("console")->call("log", wgl.glGetShaderInfoLog(shader))
+            js.Global->get("console")->call("log", glGetShaderInfoLog(shader))
             return .None
         }
-
-        return shader
+    } else {
+        success := 0
+        glGetShaderiv(shader, GL_COMPILE_STATUS, &success)
+        if success == 0 {
+            log(.Error, "Failed to compile shader.")
+            return .None
+        }
     }
+
+    return shader
 }
 // ---- Shaders ----
 
 // ---- Shapes - Triangle ----
 Vec2 :: [2]f32
-ColorValue :: [4]f32
+Color :: [4]f32
 
-#if #defined(js) {
-    Triangle :: struct {
-        verticies: [3]Vec2
-        color_data: [3]ColorValue
-        vao: wgl.GLuint
-    }
-} else {
-    Triangle :: struct {
-        verticies: [3]Vec2
-        color_data: [3]ColorValue
-        vao: u32
-    }
+Triangle :: struct {
+    verticies: [3]Vec2
+    color_data: [3]Color
+    vao: GLuint
 }
-Triangle.make :: (a, b, c: Vec2, acolor, bcolor, ccolor: ColorValue) -> #Self {
+
+Triangle.make :: (a, b, c: Vec2, acolor, bcolor, ccolor: Color) -> #Self {
     t := Triangle.{.[a, b, c], .[acolor, bcolor, ccolor], 0}
 
-    #if #defined(js) {
-        // Create VBO for verticies
-        vertex_buf := wgl.glCreateBuffer()
-        wgl.glBindBuffer(wgl.GL_ARRAY_BUFFER, vertex_buf)
-        wgl.glBufferData(wgl.GL_ARRAY_BUFFER, to_byte_array(t.verticies), wgl.GL_STATIC_DRAW)
-
-        color_buf := wgl.glCreateBuffer()
-        wgl.glBindBuffer(wgl.GL_ARRAY_BUFFER, color_buf)
-        wgl.glBufferData(wgl.GL_ARRAY_BUFFER, to_byte_array(t.color_data), wgl.GL_STATIC_DRAW)
-
-        // Create VAO
-        vao := wgl.glCreateVertexArray()
-        wgl.glBindVertexArray(vao)
-
-        // Map pointers
-        wgl.glEnableVertexAttribArray(0)
-        wgl.glBindBuffer(wgl.GL_ARRAY_BUFFER, vertex_buf)
-        wgl.glVertexAttribPointer(0, 2, wgl.GL_FLOAT, false, sizeof Vec2, 0)
-
-        wgl.glEnableVertexAttribArray(1)
-        wgl.glBindBuffer(wgl.GL_ARRAY_BUFFER, color_buf)
-        wgl.glVertexAttribPointer(1, 4, wgl.GL_FLOAT, false, sizeof ColorValue, 0)
-
-        wgl.glBindVertexArray(-1)
-
-        t.vao = vao
+    // Create VBO for verticies
+    #if #defined(js){
+    vertex_buf := glCreateBuffer()
     } else {
-
+    vertex_buf: GLuint
+    glGenBuffers(1, &vertex_buf)
     }
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_buf)
+    #if #defined(js){
+    glBufferData(GL_ARRAY_BUFFER, to_byte_array(t.verticies), GL_STATIC_DRAW)
+    } else {
+    glBufferData(GL_ARRAY_BUFFER, sizeof typeof t.verticies, to_byte_array(t.verticies).data, GL_STATIC_DRAW)
+    }
+
+    #if #defined(js){
+    color_buf := glCreateBuffer()
+    } else {
+    color_buf: GLuint
+    glGenBuffers(1, &color_buf)
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, color_buf)
+    #if #defined(js){
+    glBufferData(GL_ARRAY_BUFFER, to_byte_array(t.color_data), GL_STATIC_DRAW)
+    } else {
+    glBufferData(GL_ARRAY_BUFFER, sizeof typeof t.color_data, to_byte_array(t.color_data).data, GL_STATIC_DRAW)
+    }
+
+    // Create VAO
+    #if #defined(js){
+    vao := glCreateVertexArray()
+    } else {
+    vao: GLuint
+    glGenVertexArrays(1, &vao)
+    }
+    glBindVertexArray(vao)
+
+    // Map pointers
+    glEnableVertexAttribArray(0)
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_buf)
+    glVertexAttribPointer(0, 2, GL_FLOAT, false, sizeof Vec2, 0)
+
+    glEnableVertexAttribArray(1)
+    glBindBuffer(GL_ARRAY_BUFFER, color_buf)
+    glVertexAttribPointer(1, 4, GL_FLOAT, false, sizeof Color, 0)
+
+    glBindVertexArray(-1)
+
+    t.vao = vao
 
 
     return t
 }
 
 Triangle.draw :: (triangle: #Self, ctx: &Context) {
-    #if #defined(js) {
-        wgl.glBindVertexArray(triangle.vao)
-        wgl.glDrawArrays(wgl.GL_TRIANGLES, 0, 3)
-    }
+    glBindVertexArray(triangle.vao)
+    glDrawArrays(GL_TRIANGLES, 0, 3)
 }
 
 // ---- Shapes - Triangle ----
 
 // ---- Color ----
-Color :: enum {
+ColorValue :: enum {
     Black
     White
     Yellow

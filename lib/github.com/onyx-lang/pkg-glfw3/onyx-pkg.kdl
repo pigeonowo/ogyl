@@ -1,0 +1,18 @@
+package {
+    name "glfw3" 
+    author "Brendan Hansen" 
+    url "git://onyxlang.io/repo/glfw3" 
+    description "GLFW 3 bindings for Onyx" 
+    version "0.0.6" 
+}
+
+config {
+    dependency_source_path "./lib" 
+    dependency_binary_path "./bin" 
+}
+
+native {
+    library "onyx_glfw3" 
+    build "onyx run --generate-foreign-info build.onyx" 
+}
+

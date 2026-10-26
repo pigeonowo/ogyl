@@ -1,4 +1,3 @@
-
 //
 // ------------ MODIFIED BY ME (@quietpigeon) -----------
 //
@@ -12,6 +11,7 @@ use core{*}
 #load "./github.com/onyx-lang/pkg-webgl2/module.onyx"
 } else {
 #load "./github.com/onyx-lang/pkg-opengles/module.onyx"
+#load "./github.com/onyx-lang/pkg-glfw3/module.onyx"
 }
 
 
